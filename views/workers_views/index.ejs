@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Worker Manager Dashboard</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background-color: #f5f7fa; font-family: 'Segoe UI', sans-serif; }
+  h1 { font-weight: 600; color: #2c3e50; }
+  .queue-card { margin-bottom: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+  .queue-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; border-bottom: 1px solid #e3e6f0; }
+  .queue-info h5 { margin: 0; font-size: 1.2rem; color: #34495e; }
+  .queue-info span { font-size: 0.9rem; }
+  .queue-buttons button { min-width: 90px; }
+  table th, table td { vertical-align: middle; }
+  .btn-sm { font-size: 0.85rem; }
+  .form-card { border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+  .collapse-button { margin-bottom: 5px; }
+  .table-responsive { margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="container mt-4">
+  <h1 class="mb-4 text-center">Worker Manager Dashboard</h1>
+
+  <!-- Formulario para crear colas -->
+  <div class="card p-4 mb-4 form-card">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4">
+        <label for="queueName" class="form-label">Nombre de la cola</label>
+        <input type="text" id="queueName" class="form-control" placeholder="ej: cola1">
+      </div>
+      <div class="col-md-2">
+        <label for="concurrency" class="form-label">Concurrencia</label>
+        <input type="number" id="concurrency" class="form-control" value="1" min="1">
+      </div>
+      <div class="col-md-6 d-flex gap-2">
+        <button class="btn btn-primary w-100" onclick="startWorker()">Iniciar Worker</button>
+        <button class="btn btn-info w-100" onclick="updateAllStatus()">Actualizar Estado</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="queuesContainer"></div>
+</div>
+
+<script>
+let queues = {};
+
+function getQueueInput() { return document.getElementById('queueName').value.trim(); }
+function getConcurrencyInput() { return parseInt(document.getElementById('concurrency').value) || 1; }
+
+async function initQueues() {
+  try {
+    const res = await fetch('/api/inscripcion/worker/allQueues');
+    const allQueues = await res.json();
+    allQueues.forEach(q => addQueueCard(q));
+    updateAllStatus();
+  } catch(e) { console.error("Error al cargar colas:", e); }
+}
+
+async function startWorker(queueName = null) {
+  const queue = queueName || getQueueInput();
+  if (!queue) return alert("Escribe un nombre de cola");
+  const concurrency = getConcurrencyInput();
+  try {
+    await fetch(`/api/inscripcion/worker/start/${queue}/${concurrency}`);
+    addQueueCard(queue);
+    updateQueueStatus(queue);
+    updateQueueJobs(queue);
+  } catch (e) { console.error(e); alert("Error al iniciar worker"); }
+}
+
+async function stopWorker(queueName) {
+  if (!queueName) return;
+  try {
+    await fetch(`/api/inscripcion/worker/stop/${queueName}`);
+    updateQueueStatus(queueName);
+  } catch (e) { console.error(e); alert("Error al detener worker"); }
+}
+
+async function resumeWorker(queueName) {
+  if (!queueName) return;
+  const concurrency = getConcurrencyInput();
+  try {
+    await fetch(`/api/inscripcion/worker/start/${queueName}/${concurrency}`);
+    updateQueueStatus(queueName);
+    updateQueueJobs(queueName);
+  } catch (e) { console.error(e); alert("Error al reanudar la cola"); }
+}
+
+function addQueueCard(queue) {
+  if (queues[queue]) return;
+  queues[queue] = { jobs: [], running: false, concurrency: 0 };
+
+  const container = document.getElementById('queuesContainer');
+  const card = document.createElement('div');
+  card.className = 'card queue-card p-3';
+  card.id = `queue-${queue}`;
+  card.innerHTML = `
+    <div class="queue-header mb-3">
+      <div class="queue-info d-flex align-items-center gap-2">
+        <h5>${queue}</h5>
+        <span id="status-${queue}" class="badge bg-secondary">Desconocido</span>
+        <span id="threads-${queue}" class="badge bg-info text-dark">Hilos: ?</span>
+      </div>
+      <div class="queue-buttons d-flex gap-2" id="buttons-${queue}"></div>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary mb-2" onclick="updateQueueJobs('${queue}')">Actualizar Jobs</button>
+    <div class="table-responsive">
+      <table class="table table-hover table-bordered align-middle">
+        <thead class="table-dark">
+          <tr><th>ShortID</th><th>Name</th><th>State</th><th>Data</th><th>Return Value</th><th>Failed Reason</th></tr>
+        </thead>
+        <tbody id="tbody-${queue}"></tbody>
+      </table>
+    </div>
+  `;
+  container.appendChild(card);
+  updateQueueStatus(queue);
+}
+
+async function updateQueueStatus(queue) {
+  try {
+    const res = await fetch(`/api/inscripcion/worker/status/${queue}`);
+    const data = await res.json();
+    queues[queue].running = data.running;
+    queues[queue].concurrency = data.concurrency;
+
+    document.getElementById(`status-${queue}`).textContent = data.running ? "Corriendo" : "Detenido";
+    document.getElementById(`status-${queue}`).className = data.running ? "badge bg-success" : "badge bg-danger";
+    document.getElementById(`threads-${queue}`).textContent = `Hilos: ${data.concurrency}`;
+
+    const buttonsDiv = document.getElementById(`buttons-${queue}`);
+    buttonsDiv.innerHTML = '';
+    if (data.running) {
+      buttonsDiv.innerHTML += `<button class="btn btn-sm btn-warning" onclick="stopWorker('${queue}')">Detener</button>`;
+      buttonsDiv.innerHTML += `<button class="btn btn-sm btn-danger" onclick="deleteQueue('${queue}')">Eliminar</button>`;
+    } else {
+      buttonsDiv.innerHTML += `<button class="btn btn-sm btn-success" onclick="resumeWorker('${queue}')">Reanudar</button>`;
+      buttonsDiv.innerHTML += `<button class="btn btn-sm btn-danger" onclick="deleteQueue('${queue}')">Eliminar</button>`;
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function updateQueueJobs(queue) {
+  if (!queues[queue]) addQueueCard(queue);
+  try {
+    const res = await fetch(`/api/inscripcion/worker/jobs/${queue}`);
+    const jobs = await res.json();
+    queues[queue].jobs = jobs;
+    const tbody = document.getElementById(`tbody-${queue}`);
+    tbody.innerHTML = '';
+    jobs.forEach(job => {
+      const row = tbody.insertRow();
+      row.insertCell().textContent = job.data.shortId || job.id;
+      row.insertCell().textContent = job.name;
+      row.insertCell().textContent = job.state;
+      row.insertCell().innerHTML = `<button class="btn btn-sm btn-outline-info collapse-button" type="button" data-bs-toggle="collapse" data-bs-target="#data-${queue}-${job.id}">Ver Data</button><div class="collapse" id="data-${queue}-${job.id}"><pre>${JSON.stringify(job.data, null, 2)}</pre></div>`;
+      row.insertCell().innerHTML = `<button class="btn btn-sm btn-outline-info collapse-button" type="button" data-bs-toggle="collapse" data-bs-target="#return-${queue}-${job.id}">Ver Return</button><div class="collapse" id="return-${queue}-${job.id}"><pre>${JSON.stringify(job.returnvalue || {}, null, 2)}</pre></div>`;
+      row.insertCell().innerHTML = `<button class="btn btn-sm btn-outline-info collapse-button" type="button" data-bs-toggle="collapse" data-bs-target="#failed-${queue}-${job.id}">Ver Error</button><div class="collapse" id="failed-${queue}-${job.id}"><pre>${job.failedReason || ''}</pre></div>`;
+    });
+  } catch (e) { console.error(e); alert(`Error al obtener jobs de la cola ${queue}`); }
+}
+
+function updateAllStatus() { Object.keys(queues).forEach(q => { updateQueueStatus(q); updateQueueJobs(q); }); }
+
+async function deleteQueue(queue) {
+  if (!queues[queue]) return;
+  if (!confirm(`¿Seguro que quieres eliminar la cola ${queue}?`)) return;
+  try {
+    await fetch(`/api/inscripcion/worker/delete/${queue}`, { method: 'DELETE' });
+    document.getElementById(`queue-${queue}`).remove();
+    delete queues[queue];
+  } catch (e) { console.error(e); alert("Error al eliminar la cola"); }
+}
+
+initQueues();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
