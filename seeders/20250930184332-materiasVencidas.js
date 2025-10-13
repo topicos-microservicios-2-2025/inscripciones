@@ -27,7 +27,7 @@ module.exports = {
     const totalMaterias = materiaIds.length;
     
     // 3. Calcular la mitad y seleccionar las materias (usando Math.ceil para asegurar la primera mitad)
-    const mitadMaterias = Math.ceil(totalMaterias / 2); 
+    const mitadMaterias = Math.ceil(totalMaterias / 3); 
     // Seleccionamos los IDs de la primera mitad de las materias
     const materiasVencidasIds = materiaIds.slice(0, mitadMaterias); 
     

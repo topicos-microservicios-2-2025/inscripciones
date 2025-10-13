@@ -7,14 +7,14 @@ module.exports = {
       {
         numero: 1,
         tipo: 'Edificio',
-        nombre: 'Edificio Central',
+        nombre: 'Edificio FICCT',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
       {
         numero: 2,
         tipo: 'Edificio',
-        nombre: 'Edificio Anexo',
+        nombre: 'Edificio Derecho',
         createdAt: new Date(),
         updatedAt: new Date(),
       }

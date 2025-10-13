@@ -19,10 +19,7 @@ module.exports = (sequelize, DataTypes) => {
   AulaHorario.init({
     aulaId: DataTypes.INTEGER,
     horarioId: DataTypes.INTEGER,
-    grupoMateriaId: DataTypes.INTEGER,
-    dia: DataTypes.STRING,
-    horaInicio: DataTypes.TIME,
-    horaFin: DataTypes.TIME
+    grupoMateriaId: DataTypes.INTEGER
   }, {
     sequelize,
     modelName: 'AulaHorario',

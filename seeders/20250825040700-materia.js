@@ -134,7 +134,7 @@ module.exports = {
         createdAt: new Date(),
         updatedAt: new Date()
       },
-      // OPTATIVAS III (Se le asigna nivel 3)
+      /*/ OPTATIVAS III (Se le asigna nivel 3)
       {
         nombre: 'TEORIA DE CAMPOS',
         horasDeEstudio: 6, // 3 HT + 3 HP
@@ -150,7 +150,7 @@ module.exports = {
         nivel: 3,
         createdAt: new Date(),
         updatedAt: new Date()
-      },
+      },*/
 
 
       // ------------------------------------
@@ -196,7 +196,7 @@ module.exports = {
         createdAt: new Date(),
         updatedAt: new Date()
       },
-      // OPTATIVAS IV (Se le asigna nivel 4)
+      /*/ OPTATIVAS IV (Se le asigna nivel 4)
       {
         nombre: 'ANALISIS DE CIRCUITOS ELECTRONICOS',
         horasDeEstudio: 6, // 3 HT + 3 HP
@@ -204,7 +204,7 @@ module.exports = {
         nivel: 4,
         createdAt: new Date(),
         updatedAt: new Date()
-      },
+      },*/
 
       // ------------------------------------
       //           5to. SEMESTRE (NIVEL 5)
@@ -266,7 +266,7 @@ module.exports = {
         createdAt: new Date(),
         updatedAt: new Date()
       },
-      // OPTATIVAS V (Se le asigna nivel 5)
+      /*/ OPTATIVAS V (Se le asigna nivel 5)
       {
         nombre: 'ORGANIZACION Y METODOS',
         horasDeEstudio: 6, // 4 HT + 2 HP
@@ -306,7 +306,7 @@ module.exports = {
         nivel: 5,
         createdAt: new Date(),
         updatedAt: new Date()
-      },
+      },*/
 
       // ------------------------------------
       //           6to. SEMESTRE (NIVEL 6)

@@ -1,4 +1,4 @@
-const { Estudiante, Carrera, Facultad, Periodo, Gestion, Detalle_carrera_cursadas, ActaDeNotas, PreRequisito, Detalle_Inscripcion, DetalleNota, Horario, Boleta_Inscripcion, Plan_de_estudio, Detalle_materia, Grupo_Materia, Aula, Modulo, Materia, Docente, MateriasVencidas, AulaHorario } = require('../models');
+const { Estudiante, Carrera, Facultad, Periodo, Gestion, Detalle_carrera_cursadas, ActaDeNotas, Pre_requisito, Detalle_Inscripcion, DetalleNota, Horario, Boleta_Inscripcion, Plan_de_estudio, Detalle_materia, Grupo_Materia, Aula, Modulo, Materia, Docente, MateriasVencidas, AulaHorario } = require('../models');
 
 const { sequelize } = require('../models');
 
@@ -17,7 +17,6 @@ module.exports = {
                         include: [
                             {
                                 model: Detalle_carrera_cursadas,
-                                // Opcional: Si quieres incluir la información del Plan_de_estudio dentro de Detalle_carrera_cursadas
                                 attributes: {
                                     exclude: ['createdAt', 'updatedAt', 'estudianteId', 'planDeEstudioId']
                                 },
@@ -38,72 +37,122 @@ module.exports = {
                 throw new Error('Estudiante no encontrado');
             }
 
-            console.log(JSON.stringify(estudiante, null, null));
-
-            console.log("Detalle carrera cursadas:");
-            console.log(estudiante.Detalle_carrera_cursadas[0].dataValues.Plan_de_estudio.id);
-
             const planDeEstudioId = estudiante.Detalle_carrera_cursadas[0].dataValues.Plan_de_estudio.id;
 
-            console.log(planDeEstudioId)
-
+            // --- 1. OBTENER MATERIAS DEL PLAN DE ESTUDIO CON SUS PRERREQUISITOS ---
             const detallesMaterias = await Detalle_materia.findAll({
                 where: {
                     planDeEstudioId: planDeEstudioId
                 },
-                // Aquí SÍ usas el include para Materia, pero es una consulta simple (1 nivel)
                 include: [
                     {
                         model: Materia,
+                        // Incluimos los prerrequisitos aquí para hacer la validación en el Paso 3
+                        include: [{
+                            model: Pre_requisito,
+                            as: 'Prerequisitos',
+                            attributes: ['prerequisitoId'],
+                            required: false
+                        }]
                     }
                 ]
             });
-            const materiasPlanDeEstudio = detallesMaterias.map(detalle => detalle.Materium);
+            // Extraemos las instancias de Materia (que ahora incluyen sus Prerequisitos)
+            let materiasPlanDeEstudio = detallesMaterias.map(detalle => detalle.Materium);
 
 
+            // --- 2. OBTENER MATERIAS VENCIDAS (y sus IDs) ---
             const materiasVencidas = await
                 MateriasVencidas.findAll({
                     where: {
                         estudianteId: estudiante.id,
                     },
                     include: {
-                        model: Materia,
+                        model: Materia, // <-- Estás incluyendo el modelo Materia aquí
                     },
                     attributes: {
                         exclude: ['carreraId']
                     }
                 });
 
-            const materiasVencidasLista = materiasVencidas.map(detalle => detalle.Materium);
+            // Crear el Set de IDs vencidos para búsquedas rápidas
+            const vencidasIds = new Set(materiasVencidas.map(mv => mv.materiaId));
 
-            console.log({ estudiante, materiasVencidasLista, materiasPlanDeEstudio });
 
-            const vencidasIds = new Set(materiasVencidasLista.map(materia => materia.id));
+            // --- 3. APLICAR LÓGICA DE PRERREQUISITOS (Reemplazando el filtro por nivel) ---
 
+            // 3.1. Filtrar Materias Pendientes (que no estén vencidas)
             let materiasPendientes = materiasPlanDeEstudio.filter(materia => !vencidasIds.has(materia.id));
 
-            const nivelMinimo = Math.min(...materiasPendientes.map(materia => materia.nivel));
+            // 3.2. Aplicar el filtro de Prerrequisitos
+            const materiasElegibles = materiasPendientes.filter(materia => {
 
-            materiasPendientes = materiasPendientes.filter(materia => materia.nivel === nivelMinimo);
+                const prerequisitosDeMateria = materia.Prerequisitos;
 
-            const materiaIdsPendientes = materiasPendientes.map(materia => materia.id);
+                // Si la materia NO tiene prerrequisitos, es elegible (true).
+                if (!prerequisitosDeMateria || prerequisitosDeMateria.length === 0) {
+                    return true;
+                }
 
+                // Si tiene prerrequisitos, verificar que TODOS estén vencidos.
+                const todosPrerequisitosCumplidos = prerequisitosDeMateria.every(prereq => {
+                    return vencidasIds.has(prereq.prerequisitoId);
+                });
+
+                return todosPrerequisitosCumplidos;
+            });
+
+            // Obtenemos solo los IDs de las materias que SÍ puede tomar.
+            const materiaIdsElegibles = materiasElegibles.map(materia => materia.id);
+
+            // --- 4. OBTENER MAESTRO OFERTA (con la lista filtrada) ---
+            // Usamos la lista de IDs que pasaron el filtro de prerrequisitos
             const maestroOferta = await Materia.findAll({
                 where: {
-                    id: materiaIdsPendientes
+                    id: materiaIdsElegibles // <--- USAMOS LA LISTA FILTRADA POR PRERREQUISITOS
                 },
                 include: [{
                     model: Grupo_Materia,
-                    include: [{
-                        model: Docente
-                    }]
+                    include: [
+                        {
+                            model: Docente,
+                            attributes: {
+                                exclude: ['createdAt', 'updatedAt', 'fechaNac','ci', 'profesion']
+                            }
+                        },
+                        {
+                            model: AulaHorario,
+                            attributes: {
+                                exclude: ['createdAt', 'updatedAt']
+                            },
+                            include: [
+                                {
+                                    model: Aula,
+                                    attributes: ['numero'],
+                                    include: [
+                                        {
+                                            model: Modulo,
+                                            attributes: ['numero', 'nombre'],
+                                        }
+                                    ]
+                                },
+                                {
+                                    model: Horario,
+                                    attributes: ['inicio', 'final', 'dia'],
+                                }
+                            ]
+                        }
+                    ],
+                    attributes: {
+                        exclude: ['createdAt', 'updatedAt']
+                    },
                 }],
-                attributes: {
-                    exclude: ['createdAt', 'updatedAt']
-                },
+                attributes: { exclude: ['createdAt', 'updatedAt', 'docenteId', 'periodoId'] },
+                order: [['nivel', 'ASC']]
             });
 
-            return { estudiante, materiasVencidasLista, maestroOferta };
+            // Opcional: Para el retorno, es mejor devolver las materiasElegibles completas
+            return { estudiante, materiasVencidasLista: materiasVencidas.map(mv => mv.Materium), maestroOferta };
         } catch (error) {
             console.error('Error al obtener la oferta académica:', error);
             throw error;
@@ -144,7 +193,18 @@ module.exports = {
             if (sinCupos.length > 0) {
                 // Si hay grupos sin cupo, lanzamos un error y el bloque 'catch' lo maneja.
                 // NO debes llamar a t.rollback() aquí, ya que el 'catch' lo hará.
-                throw new Error(`No hay cupo en los siguientes grupos: ${sinCupos.join(', ')}`);
+                const grupoSinCupo = await Grupo_Materia.findAll({
+                    where: { id: sinCupos },
+                    include: [
+                        {
+                            model: Materia
+                        }
+                    ]
+                });
+                console.log("grupos sin cupo: ", grupoSinCupo);
+                t.rollback(); // Asegurarse de hacer rollback inmediatamente
+                return { message: "materias sin cupo", grupoSinCupo };
+                //throw new Error(`No hay cupo en los siguientes grupos: ${sinCupos.join(', ')}`);
             }
 
             // 3. Disminuir el cupo atómicamente (Una sola consulta, más eficiente y seguro)
@@ -164,7 +224,7 @@ module.exports = {
 
             const idBoleta = boleta.dataValues.id;
             console.log("la botlata de id: ", idBoleta)
-            
+
             // 5. Crear el detalle de inscripcion con bulkCreate
             const detallesInscripcion = gruposAInscribirIds.map((grupoMateriaId) => ({
                 grupoMateriaId,
@@ -175,7 +235,7 @@ module.exports = {
 
             // 6. Obtener la boleta inscrita (Solo lectura, pero es bueno pasar la transacción)
             const BoletaInscrita = await Boleta_Inscripcion.findOne({
-                where: { id: idBoleta},
+                where: { id: idBoleta },
                 include: [
                     {
                         model: Estudiante,
@@ -200,7 +260,7 @@ module.exports = {
                         ],
                     }
                 ],
-                 transaction: t 
+                transaction: t
             }); // 👈 Pasar transacción
 
             console.log(JSON.stringify(BoletaInscrita, null, 2));
@@ -216,11 +276,11 @@ module.exports = {
             }
 
             // Manejar el error de "Sin Cupo"
-            if (error.message.startsWith('No hay cupo')) {
-                const sinCuposMatch = error.message.match(/\[(.*?)\]/);
-                const sinCupos = sinCuposMatch ? sinCuposMatch[1].split(', ') : [];
-                return { message: error.message, sinCupos };
-            }
+            //if (error.message.startsWith('No hay cupo')) {
+            //const sinCuposMatch = error.message.match(/\[(.*?)\]/);
+            //const sinCupos = sinCuposMatch ? sinCuposMatch[1].split(', ') : [];
+            //    return { message: error.message, sinCupos };
+            //}
 
             // Devolver el error genérico
             return { message: 'Error interno de inscripción', details: error.message };

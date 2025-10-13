@@ -44,3 +44,27 @@ exports.getStatus = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+exports.getTaskById = async (req, res) => {
+  try {
+    const shortId = parseInt(req.params.id);
+
+    if (isNaN(shortId)) {
+      return res.status(400).json({ error: "El ID debe ser un número" });
+    }
+
+    const job = await workerManager.getJobResultById(shortId);
+
+    if (!job) {
+      return res.status(404).json({ error: "Tarea no encontrada" });
+    }
+
+    res.json({
+      shortId,
+      job
+    });
+  } catch (err) {
+    console.error("❌ Error en getTaskById:", err);
+    res.status(500).json({ error: err.message });
+  }
+};

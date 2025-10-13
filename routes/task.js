@@ -39,5 +39,7 @@ router.post('/', taskController.createTask);
  */
 router.get('/:id', taskController.getStatus);
 
+router.get('/gettask/:id', taskController.getTaskById);
+
 
 module.exports = router;

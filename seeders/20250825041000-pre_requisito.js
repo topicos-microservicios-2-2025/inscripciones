@@ -26,8 +26,8 @@ module.exports = {
       'MAT207': ['MAT102'],
       'FIS200': ['FIS102'],
       // Optativas III
-      'ELT241': ['FIS102'],
-      'RDS210': ['FIS102'],
+      //'ELT241': ['FIS102'],
+      //'RDS210': ['FIS102'],
 
       // 4to. SEMESTRE (NIVEL 4)
       'ADM200': ['ADM100'],
@@ -36,7 +36,7 @@ module.exports = {
       'MAT202': ['MAT102'],
       'MAT205': ['MAT207'],
       // Optativas IV
-      'RDS220': ['RDS210'],
+      //'RDS220': ['RDS210'],
 
       // 5to. SEMESTRE (NIVEL 5)
       'INF310': ['INF220'],
@@ -45,10 +45,10 @@ module.exports = {
       'INF319': ['INF220'],
       'MAT302': ['MAT202'],
       // Optativas V
-      'ADM330': ['ADM200'],
-      'ELT352': ['RDS220'],
-      'ELT354': ['ELT241'],
-      'RDS310': ['RDS220'],
+      // 'ADM330': ['ADM200'],
+      // 'ELT352': ['RDS220'],
+      // 'ELT354': ['ELT241'],
+      // 'RDS310': ['RDS220'],
 
       // 6to. SEMESTRE (NIVEL 6)
       'INF322': ['INF312'],

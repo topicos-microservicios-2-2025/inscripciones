@@ -184,6 +184,36 @@ class WorkerManager {
     }
     return null;
   }
+
+  // buscar job por shortId en todas las colas y devolver el resultado de la tarea
+  async getJobResultById(shortId) {
+    if (this.duplicates[shortId]) {
+      return { ...this.duplicates[shortId], shortId, state: 'duplicate' };
+    }
+
+    const allQueues = Object.keys(QueueManager.queues);
+    for (const queueName of allQueues) {
+      const queue = QueueManager.queues[queueName];
+      const jobs = await queue.getJobs(['waiting', 'active', 'completed', 'failed']);
+
+      for (const job of jobs) {
+        if (job.data.shortId === shortId) {
+          const state = await job.getState();
+          const returnvalue = job.returnvalue.result || null;
+          const failedReason = job.failedReason || null;
+          return {
+            id: job.id,
+            state,
+            queue: job.data.currentQueue || queueName,
+            shortId: job.data.shortId,
+            returnvalue,
+            failedReason
+          };
+        }
+      }
+    }
+    return null;
+  }
 }
 
 module.exports = new WorkerManager();
