@@ -1,7 +1,13 @@
-const { tryCatch } = require('bullmq');
 const { Estudiante, Carrera, Facultad, Periodo, Gestion, Detalle_carrera_cursadas, ActaDeNotas, Pre_requisito, Detalle_Inscripcion, DetalleNota, Horario, Boleta_Inscripcion, Plan_de_estudio, Detalle_materia, Grupo_Materia, Aula, Modulo, Materia, Docente, MateriasVencidas, AulaHorario } = require('../models');
 
 const { sequelize } = require('../models');
+
+const ErrorEstudianteNoEncontrado = require('../exceptions/ErrorEstudianteNoEncontrado');
+const ErrorSinCupo = require('../exceptions/ErrorSinCupo');
+const ErrorColisionHorario = require('../exceptions/ErrorColisionHotario');
+const ErrorBloquearMaterias = require('../exceptions/ErrorBloquearMaterias');
+const ErrorInscribirDisminuyendoCupos = require('../exceptions/ErrorInscribirDisminuyendoCupos');
+const ErrorBoletaInscritaNoEncontrada = require('../exceptions/ErrorBoletaInscritaNoEncontrada');
 
 // =========================================================================
 // FUNCIONES AUXILIARES (InscripcionHelper)
@@ -15,7 +21,7 @@ const buscarYBloquearGrupoMaterias = async (grupoMateriasIds, t) => {
 
     try {
         await Promise.all(
-            grupoMateriasIds.map(id => 
+            grupoMateriasIds.map(id =>
                 Grupo_Materia.findOne({
                     where: { id: id },
                     attributes: ['id', 'cupo', 'sigla'],
@@ -49,15 +55,16 @@ const buscarYBloquearGrupoMaterias = async (grupoMateriasIds, t) => {
                         }
                     ]
                 });
-                if (grupo==null){
+                if (grupo == null) {
                     console.log("Grupo no encontrado para id:", id);
                 }
                 return grupo;
             })
         );
     } catch (error) {
-        console.error("Error al buscar y bloquear grupos materia:", error);
-        throw error; // Propagar el error para manejo externo
+        //console.error("Error al buscar y bloquear grupos materia:", error);
+        //throw error; // Propagar el error para manejo externo
+        throw new ErrorBloquearMaterias("Error al buscar y bloquear grupos materia");
     }
 };
 
@@ -66,6 +73,8 @@ const buscarYBloquearGrupoMaterias = async (grupoMateriasIds, t) => {
  * Retorna los IDs de los grupos válidos.
  */
 const validarCupos = async (gruposCheck, grupoMateriasIds, t) => {
+    //try {
+
     let sinCupos = [];
     const gruposAInscribirIds = [];
 
@@ -82,102 +91,105 @@ const validarCupos = async (gruposCheck, grupoMateriasIds, t) => {
 
     console.log("Grupos sin cupo detectados:", sinCupos);
     if (sinCupos.length > 0) {
-        console.warn("Grupos sin cupo:", sinCupos);
+        //console.warn("Grupos sin cupo:", sinCupos);
         const grupoSinCupo = await Grupo_Materia.findAll({
             where: { id: sinCupos.filter(id => id !== undefined) },
             include: [{ model: Materia }],
             transaction: t
         });
-
-        return {
-            success: false,
-            grupoSinCupo
-        };
+        throw new ErrorSinCupo(grupoSinCupo);
     }
     return {
         success: true,
         gruposAInscribirIds
     };
-};
+    //} catch (error) {
+    //console.error("Error al validar cupos:", error);
+    //throw error; // Propagar el error para manejo externo
 
+
+    //await t.rollback();
+    //throw new Error("Error al validar cupos");
+    //};
+};
 
 /**
  * Paso 3 checkea la colicion de horarios.
  */
-function checkHorarioConflicto(horarios) {
-    try {
-        const conflictos = [];
-        const horariosPorDia = horarios.reduce((acc, h) => {
-            const dia = h.dia;
-            if (!acc[dia]) {
-                acc[dia] = [];
-            }
-            acc[dia].push(h);
-            return acc;
-        }, {});
+const checkHorarioConflicto = (horarios) => {
+    const conflictos = [];
+    const horariosPorDia = horarios.reduce((acc, h) => {
+        const dia = h.dia;
+        if (!acc[dia]) {
+            acc[dia] = [];
+        }
+        acc[dia].push(h);
+        return acc;
+    }, {});
 
-        for (const dia in horariosPorDia) {
-            const slots = horariosPorDia[dia];
+    for (const dia in horariosPorDia) {
+        const slots = horariosPorDia[dia];
 
-            // 1. Ordenar los slots por hora de inicio (para simplificar la comparación)
-            slots.sort((a, b) => a.inicio.localeCompare(b.inicio));
+        // 1. Ordenar los slots por hora de inicio (para simplificar la comparación)
+        slots.sort((a, b) => a.inicio.localeCompare(b.inicio));
 
-            for (let i = 0; i < slots.length; i++) {
-                for (let j = i + 1; j < slots.length; j++) {
-                    const slotA = slots[i];
-                    const slotB = slots[j];
+        for (let i = 0; i < slots.length; i++) {
+            for (let j = i + 1; j < slots.length; j++) {
+                const slotA = slots[i];
+                const slotB = slots[j];
 
-                    // 2. Condición de Cruce: Si la hora de inicio del slot B es ANTES que la hora de finalización del slot A, hay solapamiento.
-                    // slotB.inicio < slotA.final
-                    if (slotB.inicio < slotA.final) {
-                        conflictos.push({
-                            dia: dia,
-                            grupoA: `${slotA.materiaSigla}-${slotA.grupoSigla}`,
-                            rangoA: `${slotA.inicio}-${slotA.final}`,
-                            grupoB: `${slotB.materiaSigla}-${slotB.grupoSigla}`,
-                            rangoB: `${slotB.inicio}-${slotB.final}`
-                        });
-                    }
+                // 2. Condición de Cruce: Si la hora de inicio del slot B es ANTES que la hora de finalización del slot A, hay solapamiento.
+                // slotB.inicio < slotA.final
+                if (slotB.inicio < slotA.final) {
+                    conflictos.push({
+                        dia: dia,
+                        grupoA: `${slotA.materiaSigla}-${slotA.grupoSigla}`,
+                        rangoA: `${slotA.inicio}-${slotA.final}`,
+                        grupoB: `${slotB.materiaSigla}-${slotB.grupoSigla}`,
+                        rangoB: `${slotB.inicio}-${slotB.final}`
+                    });
                 }
             }
         }
-        return conflictos;
-
-    } catch (error) {
-        console.error("Error al verificar conflictos de horario:", error);
-        throw error; // Propagar el error para manejo externo
     }
-}
-
+    if (conflictos.length > 0) {
+        throw new ErrorColisionHorario(conflictos);
+    }
+    return conflictos;
+};
 
 /**
  * Paso 3: Disminuye los cupos y crea la boleta/detalles.
  */
 const inscribirDisminuyendoCupos = async (estudianteId, gruposAInscribirIds, t) => {
 
-    // Disminuir el cupo atómicamente
-    await Grupo_Materia.decrement(
-        { cupo: 1 },
-        { where: { id: gruposAInscribirIds }, transaction: t }
-    );
+    try {
+        // Disminuir el cupo atómicamente
+        await Grupo_Materia.decrement(
+            { cupo: 1 },
+            { where: { id: gruposAInscribirIds }, transaction: t }
+        );
 
-    // Crear la Boleta de Inscripcion
-    const boleta = await Boleta_Inscripcion.create({
-        estudianteId,
-        fechaDeInscripcion: new Date(),
-    }, { transaction: t });
+        // Crear la Boleta de Inscripcion
+        const boleta = await Boleta_Inscripcion.create({
+            estudianteId,
+            fechaDeInscripcion: new Date(),
+        }, { transaction: t });
 
-    const idBoleta = boleta.dataValues.id;
+        const idBoleta = boleta.dataValues.id;
 
-    // Crear el detalle de inscripcion con bulkCreate
-    const detallesInscripcion = gruposAInscribirIds.map((grupoMateriaId) => ({
-        grupoMateriaId,
-        boletaInscripcionId: idBoleta
-    }));
+        // Crear el detalle de inscripcion con bulkCreate
+        const detallesInscripcion = gruposAInscribirIds.map((grupoMateriaId) => ({
+            grupoMateriaId,
+            boletaInscripcionId: idBoleta
+        }));
 
-    await Detalle_Inscripcion.bulkCreate(detallesInscripcion, { transaction: t });
+        await Detalle_Inscripcion.bulkCreate(detallesInscripcion, { transaction: t });
 
-    return idBoleta;
+        return idBoleta;
+    } catch (error) {
+        throw new ErrorInscribirDisminuyendoCupos(error.details, error.message);
+    }
 };
 
 const buscarBoleta = async (idBoleta, t) => {
@@ -234,11 +246,10 @@ const buscarBoleta = async (idBoleta, t) => {
         });
         return boleta;
     } catch (error) {
-        console.error("Error al buscar la boleta de inscripción:", error);
-        throw error; // Propagar el error para manejo externo
+        throw new ErrorBoletaInscritaNoEncontrada(error.idBoleta);
     }
 
-}
+};
 
 module.exports = {
 
@@ -418,15 +429,19 @@ module.exports = {
             console.log("Paso 2: Validando cupos para los grupos materia bloqueados.");
             const { success, gruposAInscribirIds, grupoSinCupo } = await validarCupos(gruposCheck, grupoMateriasIds, t);
 
+            /*
             if (!success) {
-                console.log("Inscripción fallida: Algunos grupos no tienen cupo.", grupoSinCupo);
+                //console.log("Inscripción fallida: Algunos grupos no tienen cupo.", grupoSinCupo);
                 // Ya se hizo rollback dentro de validarCupos
                 await t.rollback();
-                return {
-                    message: "no se puede inscribir por falta de cupos",
-                    grupoSinCupo
-                }
+                throw new ErrorSinCupo(grupoSinCupo);
+                //return {
+                //    message: "no se puede inscribir por falta de cupos",
+                //    grupoSinCupo
+                //}
+
             }
+                */
 
             // 3. VALIDACIÓN DE HORARIOS
             console.log("Paso 3: Validando conflictos de horario entre los grupos a inscribir.");
@@ -446,13 +461,14 @@ module.exports = {
                             final: ah.Horario.final,
                             grupoSigla: grupo.sigla,
                             materiaSigla: grupo.Materium.sigla // Usamos el alias de Materia
-                        }] : []
+                        }] : [] // Si no hay horario, retornamos un array vacío (no agregamos nada
                     )
                 );
             console.log("Horarios a validar:", todosLosHorarios);
 
-            const conflictosDeHorario = checkHorarioConflicto(todosLosHorarios);
+            const conflictosDeHorario = checkHorarioConflicto(todosLosHorarios, t);
 
+            /*
             if (conflictosDeHorario.length > 0) {
                 console.log("Inscripción fallida: Conflictos de horario detectados.", conflictosDeHorario);
                 // ... (Lógica de formateo de error de horario) ...
@@ -462,6 +478,7 @@ module.exports = {
                     conflictosDeHorario
                 }
             }
+            */
 
             // 4. CREACIÓN DE REGISTROS (Requiere la transacción)
             console.log("Paso 4: Creando registros de inscripción y disminuyendo cupos.");
@@ -477,9 +494,52 @@ module.exports = {
             return { message: 'Inscripción creada exitosamente', BoletaInscrita };
 
         } catch (error) {
-            console.error("Error durante el proceso de inscripción:", error);
+
+            console.log("❌❌❌ Error durante el proceso de inscripción, DETENIENDO TRANSACCION❌❌❌");
+
             if (t) await t.rollback();
-            throw error;
+
+            if (error instanceof ErrorBoletaInscritaNoEncontrada) {
+                // console.log("Error capturado: Boleta no encontrada");
+                return {
+                    message: "no se puedo inscribir por error en la boleta",
+                    detalles: error.message
+                };
+            }
+
+            if (error instanceof ErrorBloquearMaterias) {
+                // console.log("Error capturado: No se pudo bloquear materias");
+                return {
+                    message: "no se puedo inscribir por error conflictos en la base de datos",
+                    detalles: error.materias
+                };
+            }
+
+            if (error instanceof ErrorSinCupo) {
+                console.log("Error capturado: Materias Sin cupo");
+                const r = {
+                    message: "no se puede inscribir por falta de cupos",
+                    grupoSinCupo: error.sinCupos
+                };
+                console.log(r);
+                return r;
+            }
+
+            if (error instanceof ErrorColisionHorario) {
+                // console.log("Error capturado: Colision de Horarios");
+                return {
+                    message: "no se puede inscribir por colicion de horarios",
+                    conflictosDeHorario: error.conflictos
+                };
+            }
+
+            if (error instanceof ErrorInscribirDisminuyendoCupos) {
+                // console.log("Error capturado: Disminución de cupos al inscribir");
+                return {
+                    message: "no se puede inscribir por conflictos en base de datos al disminuir cupos",
+                    detalles: error.conflictos
+                };
+            }
         }
     }
 };
