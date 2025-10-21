@@ -13,7 +13,7 @@ module.exports = {
       {
         fechaInscripcion: new Date('2024-08-15'),
         estudianteId: 2,
-        planDeEstudioId: 2,
+        planDeEstudioId: 1,
         createdAt: new Date(),
         updatedAt: new Date()
       }

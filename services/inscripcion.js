@@ -8,6 +8,7 @@ const ErrorColisionHorario = require('../exceptions/ErrorColisionHotario');
 const ErrorBloquearMaterias = require('../exceptions/ErrorBloquearMaterias');
 const ErrorInscribirDisminuyendoCupos = require('../exceptions/ErrorInscribirDisminuyendoCupos');
 const ErrorBoletaInscritaNoEncontrada = require('../exceptions/ErrorBoletaInscritaNoEncontrada');
+const { where } = require('sequelize');
 
 // =========================================================================
 // FUNCIONES AUXILIARES (InscripcionHelper)
@@ -400,8 +401,18 @@ module.exports = {
                 order: [['nivel', 'ASC']]
             });
 
+            const materiaVencidasR = materiasVencidas.map(mv => {
+
+                let nvm = mv.Materium.dataValues;
+                nvm["nota"] = mv.nota;
+                return nvm;
+
+            });
+
+            console.log("=========================>>>>>>>>>>>>>>>>>>>>>>>><<<", materiaVencidasR)
+
             // Opcional: Para el retorno, es mejor devolver las materiasElegibles completas
-            return { estudiante, materiasVencidasLista: materiasVencidas.map(mv => mv.Materium), maestroOferta };
+            return { estudiante, materiasVencidasLista: materiaVencidasR , maestroOferta };
         } catch (error) {
             console.error('Error al obtener la oferta académica:', error);
             throw error;
