@@ -7,6 +7,7 @@ var cors = require('cors');  // <-- agregado cors
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
 var tasksRoute = require('./routes/task');
+var boletaInscripcionRouter = require('./routes/boletaInscripcion');
 
 var apiRouter = require('./routes/api');
 
@@ -35,5 +36,6 @@ app.use("/tasks", tasksRoute);
 
 app.use("/worker", workerRouter);
 
+app.use("/boleta", boletaInscripcionRouter);
 
 module.exports = app;

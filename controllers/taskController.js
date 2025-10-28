@@ -53,7 +53,11 @@ exports.getTaskById = async (req, res) => {
       return res.status(400).json({ error: "El ID debe ser un número" });
     }
 
+    console.log("Buscando tarea con ID:", shortId);
+
     const job = await workerManager.getJobResultById(shortId);
+
+    console.log("Tarea encontrada:", job);
 
     if (!job) {
       return res.status(404).json({ error: "Tarea no encontrada" });

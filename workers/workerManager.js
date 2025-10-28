@@ -187,6 +187,7 @@ class WorkerManager {
 
   // buscar job por shortId en todas las colas y devolver el resultado de la tarea
   async getJobResultById(shortId) {
+    console.log("Buscando job con shortId:", shortId);
     if (this.duplicates[shortId]) {
       return { ...this.duplicates[shortId], shortId, state: 'duplicate' };
     }

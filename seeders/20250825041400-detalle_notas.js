@@ -2,7 +2,7 @@
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.bulkInsert('Detalle_de_notas', [
+    /*await queryInterface.bulkInsert('Detalle_de_notas', [
       {
         puntaje: 85,
         actaDeNotasId: 1,         // Asegúrate que exista en Acta_de_notas
@@ -18,6 +18,7 @@ module.exports = {
         updatedAt: new Date()
       },
     ], {});
+    */
   },
 
   async down(queryInterface, Sequelize) {

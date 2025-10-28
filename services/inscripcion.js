@@ -8,7 +8,7 @@ const ErrorColisionHorario = require('../exceptions/ErrorColisionHotario');
 const ErrorBloquearMaterias = require('../exceptions/ErrorBloquearMaterias');
 const ErrorInscribirDisminuyendoCupos = require('../exceptions/ErrorInscribirDisminuyendoCupos');
 const ErrorBoletaInscritaNoEncontrada = require('../exceptions/ErrorBoletaInscritaNoEncontrada');
-const { where } = require('sequelize');
+const ErrorYaInscrito = require('../exceptions/ErrorYaInscrito');
 
 // =========================================================================
 // FUNCIONES AUXILIARES (InscripcionHelper)
@@ -162,6 +162,18 @@ const checkHorarioConflicto = (horarios) => {
 /**
  * Paso 3: Disminuye los cupos y crea la boleta/detalles.
  */
+
+const getCurrentPeriod = () => {
+    const fechaActual = new Date();
+    const año = fechaActual.getFullYear();
+    const mes = fechaActual.getMonth() + 1; // getMonth() es 0-indexado (Enero=0)
+
+    // Semestre 1: Enero (1) a Junio (6)
+    // Semestre 2: Julio (7) a Diciembre (12)
+    const semestre = (mes >= 1 && mes <= 6) ? 1 : 2;
+
+    return { año: año, semestre: semestre };
+};
 const inscribirDisminuyendoCupos = async (estudianteId, gruposAInscribirIds, t) => {
 
     try {
@@ -171,10 +183,25 @@ const inscribirDisminuyendoCupos = async (estudianteId, gruposAInscribirIds, t) 
             { where: { id: gruposAInscribirIds }, transaction: t }
         );
 
+        const { año, semestre } = getCurrentPeriod();
+        const periodo = await Periodo.findOne({
+            where: { numero: semestre },
+            include: [{
+                model: Gestion,
+                where: { año: año }
+            }],
+            transaction: t
+        });
+
+        if (!periodo) {
+            throw new ErrorInscribirDisminuyendoCupos("Periodo no encontrado para año y semestre dados");
+        }
+
         // Crear la Boleta de Inscripcion
         const boleta = await Boleta_Inscripcion.create({
             estudianteId,
             fechaDeInscripcion: new Date(),
+            periodoId: periodo.id
         }, { transaction: t });
 
         const idBoleta = boleta.dataValues.id;
@@ -253,10 +280,12 @@ const buscarBoleta = async (idBoleta, t) => {
 };
 
 module.exports = {
-
+    
     getEstudianteWithMaestroOferta: async (registro) => {
 
         try {
+            // 1. Obtener Estudiante y Plan de Estudio
+            console.log("Buscando estudiante con registro:", registro);
             const estudiante = await Estudiante
                 .findOne(
                     {
@@ -280,16 +309,88 @@ module.exports = {
                                 ]
                             }
                         ],
-
                     });
 
             if (!estudiante) {
                 throw new Error('Estudiante no encontrado');
             }
+            console.log("Estudiante encontrado:", estudiante.nombre, estudiante.apellidoPaterno);
+
+            // --- 2. OBTENER MATERIAS VENCIDAS (SIEMPRE) ---
+            const materiasVencidas = await
+                MateriasVencidas.findAll({
+                    where: {
+                        estudianteId: estudiante.id,
+                    },
+                    include: {
+                        model: Materia,
+                    },
+                    attributes: {
+                        exclude: ['carreraId']
+                    }
+                });
+
+            console.log(`Materias vencidas encontradas: ${materiasVencidas.length}`);
+
+            // Formatear las materias vencidas para el retorno
+            const materiaVencidasR = materiasVencidas.map(mv => {
+                let nvm = mv.Materium.dataValues;
+                nvm["nota"] = mv.nota;
+                return nvm;
+            });
+
+            console.log("Materias vencidas formateadas:", materiaVencidasR.length);
+
+
+            // =========================================================
+            // LÓGICA DE VERIFICACIÓN DE BOLETA EXISTENTE
+            // =========================================================
+
+            const { año, semestre } = getCurrentPeriod();
+
+            const periodoActual = await Periodo.findOne({
+                where: { numero: semestre },
+                include: [{
+                    model: Gestion,
+                    where: { año: año }
+                }],
+            });
+
+            if (!periodoActual) {
+                throw new Error("Periodo no encontrado para año y semestre dados");
+            }
+
+            console.log("Periodo actual encontrado:", periodoActual.numero, "Año:", periodoActual.Gestion.año);
+
+            const boletaExistente = await Boleta_Inscripcion.findOne({
+                where: {
+                    estudianteId: estudiante.id,
+                    periodoId: periodoActual.id
+                }
+            });
+
+            if (boletaExistente) {
+                console.log("✅ Boleta de inscripción existente encontrada. Retornando detalles de inscripción.");
+
+                // Si existe, buscar y retornar la boleta completa
+                const BoletaInscrita = await buscarBoleta(boletaExistente.id, null);
+                console.log("Boleta inscrita obtenida:", BoletaInscrita.id);
+
+                // RETORNO CON BOLETA + VENCIDAS
+                return {
+                    estudiante,
+                    materiasVencidasLista: materiaVencidasR,
+                    BoletaInscrita // Se manda BoletaInscrita
+                };
+            }
+
+            // =========================================================
+            // LÓGICA DE MAESTRO OFERTA (SI NO HAY BOLETA)
+            // =========================================================
 
             const planDeEstudioId = estudiante.Detalle_carrera_cursadas[0].dataValues.Plan_de_estudio.id;
 
-            // --- 1. OBTENER MATERIAS DEL PLAN DE ESTUDIO CON SUS PRERREQUISITOS ---
+            // --- 3. OBTENER MATERIAS DEL PLAN DE ESTUDIO CON SUS PRERREQUISITOS ---
             const detallesMaterias = await Detalle_materia.findAll({
                 where: {
                     planDeEstudioId: planDeEstudioId
@@ -297,7 +398,6 @@ module.exports = {
                 include: [
                     {
                         model: Materia,
-                        // Incluimos los prerrequisitos aquí para hacer la validación en el Paso 3
                         include: [{
                             model: Pre_requisito,
                             as: 'Prerequisitos',
@@ -307,44 +407,26 @@ module.exports = {
                     }
                 ]
             });
-            // Extraemos las instancias de Materia (que ahora incluyen sus Prerequisitos)
             let materiasPlanDeEstudio = detallesMaterias.map(detalle => detalle.Materium);
 
-
-            // --- 2. OBTENER MATERIAS VENCIDAS (y sus IDs) ---
-            const materiasVencidas = await
-                MateriasVencidas.findAll({
-                    where: {
-                        estudianteId: estudiante.id,
-                    },
-                    include: {
-                        model: Materia, // <-- Estás incluyendo el modelo Materia aquí
-                    },
-                    attributes: {
-                        exclude: ['carreraId']
-                    }
-                });
-
-            // Crear el Set de IDs vencidos para búsquedas rápidas
+            // Crear el Set de IDs vencidos para búsquedas rápidas (de las materiasVencidas obtenidas arriba)
             const vencidasIds = new Set(materiasVencidas.map(mv => mv.materiaId));
 
 
-            // --- 3. APLICAR LÓGICA DE PRERREQUISITOS (Reemplazando el filtro por nivel) ---
+            // --- 4. APLICAR LÓGICA DE PRERREQUISITOS ---
 
-            // 3.1. Filtrar Materias Pendientes (que no estén vencidas)
+            // 4.1. Filtrar Materias Pendientes
             let materiasPendientes = materiasPlanDeEstudio.filter(materia => !vencidasIds.has(materia.id));
 
-            // 3.2. Aplicar el filtro de Prerrequisitos
+            // 4.2. Aplicar el filtro de Prerrequisitos
             const materiasElegibles = materiasPendientes.filter(materia => {
 
                 const prerequisitosDeMateria = materia.Prerequisitos;
 
-                // Si la materia NO tiene prerrequisitos, es elegible (true).
                 if (!prerequisitosDeMateria || prerequisitosDeMateria.length === 0) {
                     return true;
                 }
 
-                // Si tiene prerrequisitos, verificar que TODOS estén vencidos.
                 const todosPrerequisitosCumplidos = prerequisitosDeMateria.every(prereq => {
                     return vencidasIds.has(prereq.prerequisitoId);
                 });
@@ -355,11 +437,10 @@ module.exports = {
             // Obtenemos solo los IDs de las materias que SÍ puede tomar.
             const materiaIdsElegibles = materiasElegibles.map(materia => materia.id);
 
-            // --- 4. OBTENER MAESTRO OFERTA (con la lista filtrada) ---
-            // Usamos la lista de IDs que pasaron el filtro de prerrequisitos
+            // --- 5. OBTENER MAESTRO OFERTA ---
             const maestroOferta = await Materia.findAll({
                 where: {
-                    id: materiaIdsElegibles // <--- USAMOS LA LISTA FILTRADA POR PRERREQUISITOS
+                    id: materiaIdsElegibles
                 },
                 include: [{
                     model: Grupo_Materia,
@@ -401,24 +482,16 @@ module.exports = {
                 order: [['nivel', 'ASC']]
             });
 
-            const materiaVencidasR = materiasVencidas.map(mv => {
+            console.log("❌ No se encontró boleta. Retornando Maestro Oferta.");
 
-                let nvm = mv.Materium.dataValues;
-                nvm["nota"] = mv.nota;
-                return nvm;
+            // RETORNO CON MAESTRO OFERTA + VENCIDAS
+            return { estudiante, materiasVencidasLista: materiaVencidasR, maestroOferta };
 
-            });
-
-            console.log("=========================>>>>>>>>>>>>>>>>>>>>>>>><<<", materiaVencidasR)
-
-            // Opcional: Para el retorno, es mejor devolver las materiasElegibles completas
-            return { estudiante, materiasVencidasLista: materiaVencidasR , maestroOferta };
         } catch (error) {
             console.error('Error al obtener la oferta académica:', error);
             throw error;
         }
     },
-
 
     createInscripcion: async (data) => {
         console.log("Iniciando createInscripcion con data:", data);
@@ -430,29 +503,52 @@ module.exports = {
 
             console.log("Iniciando proceso de inscripción para estudianteId:", estudianteId);
 
+            // =========================================================
+            // PASO 0: VERIFICAR INSCRIPCIÓN PREVIA EN EL PERIODO ACTUAL
+            // =========================================================
+            console.log("Paso 0: Verificando inscripción previa para el estudiante.");
+
+            const { año, semestre } = getCurrentPeriod();
+
+            // 0.1. Buscar el ID del Periodo actual (reutilizando lógica)
+            const periodoActual = await Periodo.findOne({
+                where: { numero: semestre },
+                include: [{
+                    model: Gestion,
+                    where: { año: año }
+                }],
+                transaction: t // Incluir en la transacción
+            });
+
+            if (!periodoActual) {
+                // Si el periodo no está configurado, es un error de sistema.
+                throw new Error("El período de inscripción actual no está configurado.");
+            }
+
+            // 0.2. Buscar Boleta existente para este estudiante y período
+            const boletaExistente = await Boleta_Inscripcion.findOne({
+                where: {
+                    estudianteId: estudianteId,
+                    periodoId: periodoActual.id
+                },
+                transaction: t
+            });
+
+            if (boletaExistente) {
+                // Si la boleta existe, revertir la transacción y lanzar el error.
+                console.warn("❌ Estudiante ya tiene una boleta para este periodo.");
+                throw new ErrorYaInscrito(semestre, año); // Lanzar el nuevo error
+            }
+
             // 1. OBTENER Y BLOQUEAR GRUPOS
-            console.log("Paso 1: Buscando y bloqueando grupos materia:", grupoMateriasIds);
+            //console.log("Paso 1: Buscando y bloqueando grupos materia:", grupoMateriasIds);
             const gruposCheck = await buscarYBloquearGrupoMaterias(grupoMateriasIds, t);
 
-            console.log("Grupos materia obtenidos y bloqueados:", gruposCheck);
+            //console.log("Grupos materia obtenidos y bloqueados:", gruposCheck);
 
             // 2. VALIDACIÓN DE CUPOS
             console.log("Paso 2: Validando cupos para los grupos materia bloqueados.");
             const { success, gruposAInscribirIds, grupoSinCupo } = await validarCupos(gruposCheck, grupoMateriasIds, t);
-
-            /*
-            if (!success) {
-                //console.log("Inscripción fallida: Algunos grupos no tienen cupo.", grupoSinCupo);
-                // Ya se hizo rollback dentro de validarCupos
-                await t.rollback();
-                throw new ErrorSinCupo(grupoSinCupo);
-                //return {
-                //    message: "no se puede inscribir por falta de cupos",
-                //    grupoSinCupo
-                //}
-
-            }
-                */
 
             // 3. VALIDACIÓN DE HORARIOS
             console.log("Paso 3: Validando conflictos de horario entre los grupos a inscribir.");
@@ -475,21 +571,9 @@ module.exports = {
                         }] : [] // Si no hay horario, retornamos un array vacío (no agregamos nada
                     )
                 );
-            console.log("Horarios a validar:", todosLosHorarios);
+            //console.log("Horarios a validar:", todosLosHorarios);
 
             const conflictosDeHorario = checkHorarioConflicto(todosLosHorarios, t);
-
-            /*
-            if (conflictosDeHorario.length > 0) {
-                console.log("Inscripción fallida: Conflictos de horario detectados.", conflictosDeHorario);
-                // ... (Lógica de formateo de error de horario) ...
-                await t.rollback();
-                return {
-                    message: "no se puede inscribir por colicion de horarios",
-                    conflictosDeHorario
-                }
-            }
-            */
 
             // 4. CREACIÓN DE REGISTROS (Requiere la transacción)
             console.log("Paso 4: Creando registros de inscripción y disminuyendo cupos.");
@@ -502,7 +586,13 @@ module.exports = {
             // 6. CONFIRMAR
             console.log("Inscripción completada exitosamente para estudianteId:", estudianteId);
             await t.commit();
-            return { message: 'Inscripción creada exitosamente', BoletaInscrita };
+            return {
+                success: true,
+                result: {
+                    message: 'Inscripción creada exitosamente',
+                    BoletaInscrita
+                }
+            };
 
         } catch (error) {
 
@@ -513,24 +603,33 @@ module.exports = {
             if (error instanceof ErrorBoletaInscritaNoEncontrada) {
                 // console.log("Error capturado: Boleta no encontrada");
                 return {
-                    message: "no se puedo inscribir por error en la boleta",
-                    detalles: error.message
+                    success: false,
+                    result: {
+                        message: "no se puedo inscribir por error en la boleta",
+                        detalles: error.message
+                    }
                 };
             }
 
             if (error instanceof ErrorBloquearMaterias) {
                 // console.log("Error capturado: No se pudo bloquear materias");
                 return {
-                    message: "no se puedo inscribir por error conflictos en la base de datos",
-                    detalles: error.materias
+                    success: false,
+                    result: {
+                        message: "no se puedo inscribir por error conflictos en la base de datos",
+                        detalles: error.materias
+                    }
                 };
             }
 
             if (error instanceof ErrorSinCupo) {
                 console.log("Error capturado: Materias Sin cupo");
                 const r = {
-                    message: "no se puede inscribir por falta de cupos",
-                    grupoSinCupo: error.sinCupos
+                    success: false,
+                    result: {
+                        message: "no se puede inscribir por falta de cupos",
+                        grupoSinCupo: error.sinCupos
+                    }
                 };
                 console.log(r);
                 return r;
@@ -539,18 +638,44 @@ module.exports = {
             if (error instanceof ErrorColisionHorario) {
                 // console.log("Error capturado: Colision de Horarios");
                 return {
-                    message: "no se puede inscribir por colicion de horarios",
-                    conflictosDeHorario: error.conflictos
+                    success: false,
+                    result: {
+                        message: "no se puede inscribir por colicion de horarios",
+                        conflictosDeHorario: error.conflictos
+                    }
                 };
             }
 
             if (error instanceof ErrorInscribirDisminuyendoCupos) {
                 // console.log("Error capturado: Disminución de cupos al inscribir");
                 return {
-                    message: "no se puede inscribir por conflictos en base de datos al disminuir cupos",
-                    detalles: error.conflictos
+                    success: false,
+                    result: {
+                        message: "no se puede inscribir por conflictos en base de datos al disminuir cupos",
+                        detalles: error.conflictos
+                    }
                 };
             }
+
+            if (error instanceof ErrorYaInscrito) {
+                console.log("Error capturado: Estudiante ya inscrito en el periodo actual");
+                return {
+                    success: false,
+                    result: {
+                        message: error.message
+                    }
+                };
+            }
+
+            // Error genérico no manejado
+            console.error("Error no manejado durante la inscripción:", error);
+            return {
+                success: false,
+                result: {
+                    message: "no se puedo inscribir por error desconocido",
+                    detalles: error.message
+                }
+            };
         }
     }
 };
